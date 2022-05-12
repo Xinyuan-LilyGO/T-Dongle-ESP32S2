@@ -49,9 +49,6 @@ class TFT_eSprite : public TFT_eSPI {
            // Get the color at the given palette index
   uint16_t getPaletteColor(uint8_t index);
 
-           // Set foreground and background colours for 1 bit per pixel Sprite
-  void     setBitmapColor(uint16_t fg, uint16_t bg);
-
   void     drawPixel(int32_t x, int32_t y, uint32_t color);
 
   void     drawChar(int32_t x, int32_t y, uint16_t c, uint32_t color, uint32_t bg, uint8_t font),
@@ -63,9 +60,9 @@ class TFT_eSprite : public TFT_eSPI {
            // Colours are converted to the set Sprite colour bit depth
            setWindow(int32_t x0, int32_t y0, int32_t x1, int32_t y1),
            // Push a color (aka singe pixel) to the screen
-           pushColor(uint32_t color),
+           pushColor(uint16_t color),
            // Push len colors (pixels) to the screen
-           pushColor(uint32_t color, uint16_t len),
+           pushColor(uint16_t color, uint32_t len),
            // Push a pixel preformatted as a 8 or 16 bit colour (avoids conversion overhead)
            writeColor(uint16_t color),
 
@@ -148,6 +145,10 @@ class TFT_eSprite : public TFT_eSPI {
 
            // Reserve memory for the Sprite and return a pointer
   void*    callocSprite(int16_t width, int16_t height, uint8_t frames = 1);
+
+           // Override the non-inlined TFT_eSPI functions
+  void     begin_nin_write(void) { ; }
+  void     end_nin_write(void) { ; }
 
  protected:
 

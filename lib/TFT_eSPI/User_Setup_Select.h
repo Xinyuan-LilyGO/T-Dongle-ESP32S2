@@ -72,19 +72,21 @@
 //#include <User_Setups/Setup44_TTGO_CameraPlus.h>   // Setup file for ESP32 and TTGO T-CameraPlus ST7789 SPI bus TFT    240x240
 //#include <User_Setups/Setup45_TTGO_T_Watch.h>      // Setup file for ESP32 and TTGO T-Watch ST7789 SPI bus TFT  240x240
 
-// #include <User_Setups/Setup47_ST7735.h>            // Setup file configured for ST7735 128 x 128 animated eyes
+//#include <User_Setups/Setup47_ST7735.h>            // Setup file configured for ST7735 128 x 128 animated eyes
 
 //#include <User_Setups/Setup50_SSD1963_Parallel.h>  // Setup file for ESP32 and SSD1963 TFT display
 
 //#include <User_Setups/Setup51_LilyPi_ILI9481.h>    // Setup file for LilyGo LilyPi with ILI9481 display
 //#include <User_Setups/Setup52_LilyPi_ST7796.h>     // Setup file for LilyGo LilyPi with ST7796 display
 
-//#include <User_Setups/Setup60_RP2040_ILI9341.h>    // Setup file for Raspberry Pi Pico with SPI ILI9341
+//#include <User_Setups/Setup60_RP2040_ILI9341.h>    // Setup file for RP2040 with SPI ILI9341
 //#include <User_Setups/Setup61_RP2040_ILI9341_PIO_SPI.h>    // Setup file for RP2040 with PIO SPI ILI9341
+//#include <User_Setups/Setup62_RP2040_Nano_Connect_ILI9341.h>    // Setup file for RP2040 with SPI ILI9341
 
 //#include <User_Setups/Setup70_ESP32_S2_ILI9341.h>  // Setup file for ESP32 S2 with SPI ILI9341
 
-//#include <User_Setups/Setup71_ESP32_S2_ST7789.h>  // Setup file for ESP32 S2 with ST7789
+//#include <User_Setups/Setup71_ESP32_S2_ST7789.h>       // Setup file for ESP32 S2 with ST7789
+// #include <User_Setups/Setup72_ESP32_ST7789_172x320.h>  // Setup file for ESP32 with ST7789 1.47" 172x320
 
 //#include <User_Setups/Setup100_RP2040_ILI9488_parallel.h>
 //#include <User_Setups/Setup101_RP2040_ILI9481_parallel.h>
@@ -93,15 +95,18 @@
 //#include <User_Setups/Setup104_RP2040_ST7796_parallel.h>
 //#include <User_Setups/Setup105_RP2040_ILI9341_PIO_SPI.h>    // Setup file for Raspberry Pi Pico with SPI PIO interface and ILI9341
 
-#include <User_Setups/Setup135_ST7789.h>           // Setup file for ESP8266 and ST7789 135 x 240 TFT
+// #include <User_Setups/Setup135_ST7789.h>           // Setup file for ESP8266 and ST7789 135 x 240 TFT
 
 //#include <User_Setups/Setup136_LilyGo_TTV.h>       // Setup file for ESP32 and Lilygo TTV ST7789 SPI bus TFT  135x240
+// #include <User_Setups/Setup137_LilyGo_TDisplay_RP2040.h>  // Setup file for Lilygo T-Display RP2040 (ST7789 on SPI bus with 135x240 TFT)
 
 //#include <User_Setups/Setup200_GC9A01.h>           // Setup file for ESP32 and GC9A01 240 x 240 TFT
 
 //#include <User_Setups/Setup201_WT32_SC01.h>        // Setup file for ESP32 based WT32_SC01 from Seeed
 
 //#include <User_Setups/Setup202_SSD1351_128.h>      // Setup file for ESP32/ESP8266 based SSD1351 128x128 1.5inch OLED display
+
+#include <User_Setups/Setup203_ST7789.h>     // Setup file for ESP32/ESP8266 based ST7789 240X280 1.69inch TFT 
 
 //#include <User_Setups/SetupX_Template.h>
 
@@ -218,7 +223,6 @@
      #define  TFT_DRIVER 0x0000
 #else
      #define  TFT_DRIVER 0x0000
-     # error "####### NO TFT DRIVER DEFINED #######"
 #endif
 
 // These are the pins for ESP8266 boards

@@ -54,10 +54,31 @@
   if (dw < 1 || dh < 1) return;
 
 /***************************************************************************************
+** Function name:           Legacy - deprecated
+** Description:             Start/end transaction
+***************************************************************************************/
+  void TFT_eSPI::spi_begin()       {begin_tft_write();}
+  void TFT_eSPI::spi_end()         {  end_tft_write();}
+  void TFT_eSPI::spi_begin_read()  {begin_tft_read(); }
+  void TFT_eSPI::spi_end_read()    {  end_tft_read(); }
+
+/***************************************************************************************
 ** Function name:           begin_tft_write (was called spi_begin)
 ** Description:             Start SPI transaction for writes and select TFT
 ***************************************************************************************/
 inline void TFT_eSPI::begin_tft_write(void){
+  if (locked) {
+    locked = false; // Flag to show SPI access now unlocked
+#if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS) && !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
+    spi.beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, TFT_SPI_MODE));
+#endif
+    CS_L;
+    SET_BUS_WRITE_MODE;  // Some processors (e.g. ESP32) allow recycling the tx buffer when rx is not used
+  }
+}
+
+// Non-inlined version to permit override
+void TFT_eSPI::begin_nin_write(void){
   if (locked) {
     locked = false; // Flag to show SPI access now unlocked
 #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS) && !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
@@ -78,11 +99,26 @@ inline void TFT_eSPI::end_tft_write(void){
       locked = true;        // Flag to show SPI access now locked
       SPI_BUSY_CHECK;       // Check send complete and clean out unused rx data
       CS_H;
+      SET_BUS_READ_MODE;    // In case bus has been configured for tx only
 #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS) && !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
       spi.endTransaction();
 #endif
     }
-    SET_BUS_READ_MODE;      // In case SPI has been configured for tx only
+  }
+}
+
+// Non-inlined version to permit override
+inline void TFT_eSPI::end_nin_write(void){
+  if(!inTransaction) {      // Flag to stop ending transaction during multiple graphics calls
+    if (!locked) {          // Locked when beginTransaction has been called
+      locked = true;        // Flag to show SPI access now locked
+      SPI_BUSY_CHECK;       // Check send complete and clean out unused rx data
+      CS_H;
+      SET_BUS_READ_MODE;    // In case SPI has been configured for tx only
+#if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS) && !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
+      spi.endTransaction();
+#endif
+    }
   }
 }
 
@@ -106,6 +142,29 @@ inline void TFT_eSPI::begin_tft_read(void){
    CS_L;
 #endif
   SET_BUS_READ_MODE;
+}
+
+
+/***************************************************************************************
+** Function name:           end_tft_read (was called spi_end_read)
+** Description:             End transaction for reads and deselect TFT
+***************************************************************************************/
+inline void TFT_eSPI::end_tft_read(void){
+#if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS) && !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
+  if(!inTransaction) {
+    if (!locked) {
+      locked = true;
+      CS_H;
+      spi.endTransaction();
+    }
+  }
+#else
+  #if !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
+    spi.setFrequency(SPI_FREQUENCY);
+  #endif
+   if(!inTransaction) {CS_H;}
+#endif
+  SET_BUS_WRITE_MODE;
 }
 
 /***************************************************************************************
@@ -183,7 +242,7 @@ bool TFT_eSPI::checkViewport(int32_t x, int32_t y, int32_t w, int32_t h)
   x+= _xDatum;
   y+= _yDatum;
 
-  if ((x >= _vpW) || (y >= _vpH)) return false; 
+  if ((x >= _vpW) || (y >= _vpH)) return false;
 
   int32_t dx = 0;
   int32_t dy = 0;
@@ -290,7 +349,7 @@ void TFT_eSPI::frameViewport(uint16_t color, int32_t w)
   // a large negative width will clear the screen outside the viewport
   {
     w = -w;
-    
+
     // Save old values
     int32_t _xT = _vpX; _vpX = 0;
     int32_t _yT = _vpY; _vpY = 0;
@@ -320,35 +379,55 @@ void TFT_eSPI::frameViewport(uint16_t color, int32_t w)
 }
 
 /***************************************************************************************
-** Function name:           end_tft_read (was called spi_end_read)
-** Description:             End transaction for reads and deselect TFT
+** Function name:           clipAddrWindow
+** Description:             Clip address window x,y,w,h to screen and viewport
 ***************************************************************************************/
-inline void TFT_eSPI::end_tft_read(void){
-#if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS) && !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
-  if(!inTransaction) {
-    if (!locked) {
-      locked = true;
-      CS_H;
-      spi.endTransaction();
-    }
-  }
-#else
-  #if !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
-    spi.setFrequency(SPI_FREQUENCY);
-  #endif
-   if(!inTransaction) {CS_H;}
-#endif
-  SET_BUS_WRITE_MODE;
+bool TFT_eSPI::clipAddrWindow(int32_t *x, int32_t *y, int32_t *w, int32_t *h)
+{
+  if (_vpOoB) return false; // Area is outside of viewport
+
+  *x+= _xDatum;
+  *y+= _yDatum;
+
+  if ((*x >= _vpW) || (*y >= _vpH)) return false;  // Area is outside of viewport
+
+  // Crop drawing area bounds
+  if (*x < _vpX) { *w -= _vpX - *x; *x = _vpX; }
+  if (*y < _vpY) { *h -= _vpY - *y; *y = _vpY; }
+
+  if ((*x + *w) > _vpW ) *w = _vpW - *x;
+  if ((*y + *h) > _vpH ) *h = _vpH - *y;
+
+  if (*w < 1 || *h < 1) return false; // No area is inside viewport
+
+  return true;  // Area is wholly or partially inside viewport
 }
 
 /***************************************************************************************
-** Function name:           Legacy - deprecated
-** Description:             Start/end transaction
+** Function name:           clipWindow
+** Description:             Clip window xs,yx,xe,ye to screen and viewport
 ***************************************************************************************/
-  void TFT_eSPI::spi_begin()       {begin_tft_write();}
-  void TFT_eSPI::spi_end()         {  end_tft_write();}
-  void TFT_eSPI::spi_begin_read()  {begin_tft_read(); }
-  void TFT_eSPI::spi_end_read()    {  end_tft_read(); }
+bool TFT_eSPI::clipWindow(int32_t *xs, int32_t *ys, int32_t *xe, int32_t *ye)
+{
+  if (_vpOoB) return false; // Area is outside of viewport
+
+  *xs+= _xDatum;
+  *ys+= _yDatum;
+  *xe+= _xDatum;
+  *ye+= _yDatum;
+
+  if ((*xs >= _vpW) || (*ys >= _vpH)) return false;  // Area is outside of viewport
+  if ((*xe <  _vpX) || (*ye <  _vpY)) return false;  // Area is outside of viewport
+
+  // Crop drawing area bounds
+  if (*xs < _vpX) *xs = _vpX;
+  if (*ys < _vpY) *ys = _vpY;
+
+  if (*xe > _vpW) *xe = _vpW - 1;
+  if (*ye > _vpH) *ye = _vpH - 1;
+
+  return true;  // Area is wholly or partially inside viewport
+}
 
 /***************************************************************************************
 ** Function name:           TFT_eSPI
@@ -549,9 +628,9 @@ void TFT_eSPI::init(uint8_t tc)
 #else
   #if !defined(TFT_PARALLEL_8_BIT) && !defined(RP2040_PIO_INTERFACE)
     #if defined (TFT_MOSI) && !defined (TFT_SPI_OVERLAP) && !defined(ARDUINO_ARCH_RP2040) && !defined (ARDUINO_ARCH_MBED)
-      spi.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, -1);
+      spi.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, -1); // This will set MISO to input
     #else
-      spi.begin();
+      spi.begin(); // This will set MISO to input
     #endif
   #endif
 #endif
@@ -562,8 +641,8 @@ void TFT_eSPI::init(uint8_t tc)
     INIT_TFT_DATA_BUS;
 
 
-#if defined (TFT_CS) && defined (ESP8266)
-  // Set to output once again in case ESP8266 D6 (MISO) is used for CS
+#if defined (TFT_CS) && !defined(RP2040_PIO_INTERFACE)
+  // Set to output once again in case MISO is used for CS
   pinMode(TFT_CS, OUTPUT);
   digitalWrite(TFT_CS, HIGH); // Chip select high (inactive)
 #elif defined (ESP8266) && !defined (TFT_PARALLEL_8_BIT) && !defined (RP2040_PIO_SPI)
@@ -571,8 +650,8 @@ void TFT_eSPI::init(uint8_t tc)
 #endif
 
 
-  // Set to output once again in case ESP8266 D6 (MISO) is used for DC
-#if defined (TFT_DC) && defined (ESP8266)
+  // Set to output once again in case MISO is used for DC
+#if defined (TFT_DC) && !defined(RP2040_PIO_INTERFACE)
     pinMode(TFT_DC, OUTPUT);
     digitalWrite(TFT_DC, HIGH); // Data/Command high = data mode
 #endif
@@ -583,6 +662,10 @@ void TFT_eSPI::init(uint8_t tc)
 
   // Toggle RST low to reset
 #ifdef TFT_RST
+  #if !defined(RP2040_PIO_INTERFACE)
+    // Set to output once again in case MISO is used for TFT_RST
+    pinMode(TFT_RST, OUTPUT);
+  #endif
   if (TFT_RST >= 0) {
     digitalWrite(TFT_RST, HIGH);
     delay(5);
@@ -653,6 +736,9 @@ void TFT_eSPI::init(uint8_t tc)
 
 #elif defined (ILI9225_DRIVER)
      #include "TFT_Drivers/ILI9225_Init.h"
+
+#elif defined (RM68120_DRIVER)
+     #include "TFT_Drivers/RM68120_Init.h"
 
 #endif
 
@@ -742,6 +828,9 @@ void TFT_eSPI::setRotation(uint8_t m)
 #elif defined (ILI9225_DRIVER)
      #include "TFT_Drivers/ILI9225_Rotation.h"
 
+#elif defined (RM68120_DRIVER)
+     #include "TFT_Drivers/RM68120_Rotation.h"
+
 #endif
 
   delayMicroseconds(10);
@@ -806,6 +895,7 @@ void TFT_eSPI::spiwrite(uint8_t c)
 ** Function name:           writecommand
 ** Description:             Send an 8 bit command to the TFT
 ***************************************************************************************/
+#ifndef RM68120_DRIVER
 void TFT_eSPI::writecommand(uint8_t c)
 {
   begin_tft_write();
@@ -819,7 +909,36 @@ void TFT_eSPI::writecommand(uint8_t c)
   end_tft_write();
 
 }
+#else
+void TFT_eSPI::writecommand(uint16_t c)
+{
+  begin_tft_write();
 
+  DC_C;
+
+  tft_Write_16(c);
+
+  DC_D;
+
+  end_tft_write();
+
+}
+void TFT_eSPI::writeRegister(uint16_t c, uint8_t d)
+{
+  begin_tft_write();
+
+  DC_C;
+
+  tft_Write_16(c);
+
+  DC_D;
+
+  tft_Write_8(d);
+
+  end_tft_write();
+
+}
+#endif
 
 /***************************************************************************************
 ** Function name:           writedata
@@ -937,10 +1056,10 @@ uint16_t TFT_eSPI::readPixel(int32_t x0, int32_t y0)
   // Set masked pins D0- D7 to input
   busDir(dir_mask, INPUT);
 
-#if  !defined (SSD1963_DRIVER)
+  #if  !defined (SSD1963_DRIVER)
   // Dummy read to throw away don't care value
   readByte();
-#endif
+  #endif
 
   // Fetch the 16 bit BRG pixel
   //uint16_t rgb = (readByte() << 8) | readByte();
@@ -985,9 +1104,9 @@ uint16_t TFT_eSPI::readPixel(int32_t x0, int32_t y0)
 
   uint16_t color = 0;
 
-  begin_tft_read();
+  begin_tft_read(); // Sets CS low
 
-  readAddrWindow(x0, y0, 1, 1); // Sets CS low
+  readAddrWindow(x0, y0, 1, 1);
 
   #ifdef TFT_SDA_READ
     begin_SDA_Read();
@@ -1892,7 +2011,7 @@ void  TFT_eSPI::readRectRGB(int32_t x0, int32_t y0, int32_t w, int32_t h, uint8_
   uint8_t* buf565 = data + len;
 
   readRect(x0, y0, w, h, (uint16_t*)buf565);
-  
+
   while (len--) {
     uint16_t pixel565 = (*buf565++)<<8;
     pixel565 |= *buf565++;
@@ -1971,7 +2090,7 @@ void TFT_eSPI::drawCircle(int32_t x0, int32_t y0, int32_t r, uint32_t color)
     int32_t xs    = -1;
     int32_t xe    = 0;
     int32_t len   = 0;
-    
+
     bool first = true;
     do {
       while (f < 0) {
@@ -2833,7 +2952,6 @@ int16_t TFT_eSPI::textWidth(const char *string, uint8_t font)
 ** Description:             return an encoded 16 bit value showing the fonts loaded
 ***************************************************************************************/
 // Returns a value showing which fonts are loaded (bit N set =  Font N loaded)
-
 uint16_t TFT_eSPI::fontsLoaded(void)
 {
   return fontsloaded;
@@ -3095,9 +3213,9 @@ void TFT_eSPI::setWindow(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
       DC_C;
       #if !defined (SPI_18BIT_DRIVER)
         #if  defined (RPI_DISPLAY_TYPE) // RPi TFT type always needs 16 bit transfers
-          spi_set_format(SPI_X,  16, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
+          hw_write_masked(&spi_get_hw(SPI_X)->cr0, (16 - 1) << SPI_SSPCR0_DSS_LSB, SPI_SSPCR0_DSS_BITS);
         #else
-          spi_set_format(SPI_X,  8, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
+          hw_write_masked(&spi_get_hw(SPI_X)->cr0, (8 - 1) << SPI_SSPCR0_DSS_LSB, SPI_SSPCR0_DSS_BITS);
         #endif
       #endif
       spi_get_hw(SPI_X)->dr = (uint32_t)TFT_CASET;
@@ -3126,13 +3244,13 @@ void TFT_eSPI::setWindow(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 
       while (spi_get_hw(SPI_X)->sr & SPI_SSPSR_BSY_BITS) {};
       #if !defined (SPI_18BIT_DRIVER)
-        spi_set_format(SPI_X, 16, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
+        hw_write_masked(&spi_get_hw(SPI_X)->cr0, (16 - 1) << SPI_SSPCR0_DSS_LSB, SPI_SSPCR0_DSS_BITS);
       #endif
       DC_D;
     #else
       // This is for the RP2040 and PIO interface (SPI or parallel)
       WAIT_FOR_STALL;
-      pio->sm[pio_sm].instr = pio_instr_addr;
+      tft_pio->sm[pio_sm].instr = pio_instr_addr;
 
       TX_FIFO = TFT_CASET;
       TX_FIFO = (x0<<16) | x1;
@@ -3167,6 +3285,10 @@ void TFT_eSPI::readAddrWindow(int32_t xs, int32_t ys, int32_t w, int32_t h)
   addr_col = 0xFFFF;
   addr_row = 0xFFFF;
 
+#if defined (SSD1963_DRIVER)
+  if ((rotation & 0x1) == 0) { swap_coord(xs, ys); swap_coord(xe, ye); }
+#endif
+
 #ifdef CGRAM_OFFSET
   xs += colstart;
   xe += colstart;
@@ -3174,15 +3296,13 @@ void TFT_eSPI::readAddrWindow(int32_t xs, int32_t ys, int32_t w, int32_t h)
   ye += rowstart;
 #endif
 
-#if defined (SSD1963_DRIVER)
-  if ((rotation & 0x1) == 0) { swap_coord(xs, ys); swap_coord(xe, ye); }
-#endif
-
   // Temporary solution is to include the RP2040 optimised code here
 #if (defined(ARDUINO_ARCH_RP2040)  || defined (ARDUINO_ARCH_MBED)) && !defined(RP2040_PIO_INTERFACE)
+  // Use hardware SPI port, this code does not swap from 8 to 16 bit
+  // to avoid the spi_set_format() call overhead
   while (spi_get_hw(SPI_X)->sr & SPI_SSPSR_BSY_BITS) {};
   DC_C;
-  spi_set_format(SPI_X,  8, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
+  hw_write_masked(&spi_get_hw(SPI_X)->cr0, (8 - 1) << SPI_SSPCR0_DSS_LSB, SPI_SSPCR0_DSS_BITS);
   spi_get_hw(SPI_X)->dr = (uint32_t)TFT_CASET;
 
   while (spi_get_hw(SPI_X)->sr & SPI_SSPSR_BSY_BITS) {};
@@ -3208,7 +3328,6 @@ void TFT_eSPI::readAddrWindow(int32_t xs, int32_t ys, int32_t w, int32_t h)
   spi_get_hw(SPI_X)->dr = (uint32_t)TFT_RAMRD;
 
   while (spi_get_hw(SPI_X)->sr & SPI_SSPSR_BSY_BITS) {};
-  //spi_set_format(SPI_X, 8, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
   DC_D;
 
   // Flush the rx buffer and reset overflow flag
@@ -3245,7 +3364,7 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   x+= _xDatum;
   y+= _yDatum;
 
-  // Range checking 
+  // Range checking
   if ((x < _vpX) || (y < _vpY) ||(x >= _vpW) || (y >= _vpH)) return;
 
 #ifdef CGRAM_OFFSET
@@ -3271,7 +3390,7 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
     DC_D; tft_Write_16(0);
     DC_C; tft_Write_8(TFT_CASET2);
     DC_D; tft_Write_16(175);
- 
+
     DC_C; tft_Write_8(TFT_PASET1);
     DC_D; tft_Write_16(0);
     DC_C; tft_Write_8(TFT_PASET2);
@@ -3293,9 +3412,9 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   #endif
 
 // Temporary solution is to include the RP2040 optimised code here
-#elif (defined (ARDUINO_ARCH_RP2040) || defined (ARDUINO_ARCH_MBED)) && !defined (SSD1351_DRIVER) 
+#elif (defined (ARDUINO_ARCH_RP2040) || defined (ARDUINO_ARCH_MBED)) && !defined (SSD1351_DRIVER)
 
-  #if defined (SSD1963_DRIVER) 
+  #if defined (SSD1963_DRIVER)
     if ((rotation & 0x1) == 0) { swap_coord(x, y); }
   #endif
 
@@ -3303,9 +3422,9 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
     while (spi_get_hw(SPI_X)->sr & SPI_SSPSR_BSY_BITS) {};
 
     #if  defined (RPI_DISPLAY_TYPE) // RPi TFT type always needs 16 bit transfers
-      spi_set_format(SPI_X,  16, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
+      hw_write_masked(&spi_get_hw(SPI_X)->cr0, (16 - 1) << SPI_SSPCR0_DSS_LSB, SPI_SSPCR0_DSS_BITS);
     #else
-      spi_set_format(SPI_X,  8, (spi_cpol_t)0, (spi_cpha_t)0, SPI_MSB_FIRST);
+      hw_write_masked(&spi_get_hw(SPI_X)->cr0, (8 - 1) << SPI_SSPCR0_DSS_LSB, SPI_SSPCR0_DSS_BITS);
     #endif
 
     if (addr_col != x) {
@@ -3358,25 +3477,27 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   #else
     // This is for the RP2040 and PIO interface (SPI or parallel)
     WAIT_FOR_STALL;
-    pio->sm[pio_sm].instr = pio_instr_addr;
+    tft_pio->sm[pio_sm].instr = pio_instr_addr;
     TX_FIFO = TFT_CASET;
     TX_FIFO = (x<<16) | x;
     TX_FIFO = TFT_PASET;
     TX_FIFO = (y<<16) | y;
     TX_FIFO = TFT_RAMWR;
     //DC set high by PIO
-    tft_Write_16((uint16_t)color);
+    TX_FIFO = color;
+
   #endif
 
 #else
 
-  #if defined (SSD1351_DRIVER) || defined (SSD1963_DRIVER) 
+  #if defined (SSD1963_DRIVER)
     if ((rotation & 0x1) == 0) { swap_coord(x, y); }
   #endif
 
     SPI_BUSY_CHECK;
 
   #if defined (SSD1351_DRIVER)
+    if (rotation & 0x1) { swap_coord(x, y); }
     // No need to send x if it has not changed (speeds things up)
     if (addr_col != x) {
       DC_C; tft_Write_8(TFT_CASET);
@@ -3407,7 +3528,7 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   #endif
 
   DC_C; tft_Write_8(TFT_RAMWR);
-  
+
   #if defined(TFT_PARALLEL_8_BIT) || !defined(ESP32)
     DC_D; tft_Write_16(color);
   #else
@@ -3426,7 +3547,8 @@ void TFT_eSPI::pushColor(uint16_t color)
 {
   begin_tft_write();
 
-  tft_Write_16(color);
+  SPI_BUSY_CHECK;
+  tft_Write_16N(color);
 
   end_tft_write();
 }
@@ -3575,6 +3697,244 @@ void TFT_eSPI::drawLine(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t
 
   inTransaction = lockTransaction;
   end_tft_write();
+}
+
+
+/***************************************************************************************
+** Description:  Constants for anti-aliased line drawing on TFT and in Sprites
+***************************************************************************************/
+constexpr float PixelAlphaGain   = 255.0;
+constexpr float LoAlphaTheshold  = 1.0/32.0;
+constexpr float HiAlphaTheshold  = 1.0 - LoAlphaTheshold;
+
+/***************************************************************************************
+** Function name:           drawPixel (aplha blended)
+** Description:             Draw a pixel blended with the screen or bg pixel colour
+***************************************************************************************/
+uint16_t TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color, uint8_t alpha, uint32_t bg_color)
+{
+  if (bg_color == 0x00FFFFFF) bg_color = readPixel(x, y);
+  color = alphaBlend(alpha, color, bg_color);
+  drawPixel(x, y, color);
+  return color;
+}
+
+/***************************************************************************************
+** Function name:           fillSmoothCircle
+** Description:             Draw a filled anti-aliased circle
+***************************************************************************************/
+void TFT_eSPI::fillSmoothCircle(int32_t x, int32_t y, int32_t r, uint32_t color, uint32_t bg_color)
+{
+  if (r <= 0) return;
+  
+  inTransaction = true;
+
+  drawFastHLine(x - r, y, 2 * r + 1, color);
+  int32_t xs = 1;
+  int32_t cx = 0;
+
+  int32_t r1 = r * r;
+  r++;
+  int32_t r2 = r * r;
+  
+  for (int32_t cy = r - 1; cy > 0; cy--)
+  {
+    int32_t dy2 = (r - cy) * (r - cy);
+    for (cx = xs; cx < r; cx++)
+    {
+      int32_t hyp2 = (r - cx) * (r - cx) + dy2;
+      if (hyp2 <= r1) break;
+      if (hyp2 >= r2) continue;
+      float alphaf = (float)r - sqrtf(hyp2);
+      if (alphaf > HiAlphaTheshold) break;
+      xs = cx;
+      if (alphaf < LoAlphaTheshold) continue;
+      uint8_t alpha = alphaf * 255;
+
+      if (bg_color == 0x00FFFFFF) {
+        drawPixel(x + cx - r, y + cy - r, color, alpha, bg_color);
+        drawPixel(x - cx + r, y + cy - r, color, alpha, bg_color);
+        drawPixel(x - cx + r, y - cy + r, color, alpha, bg_color);
+        drawPixel(x + cx - r, y - cy + r, color, alpha, bg_color);
+      }
+      else {
+        uint16_t pcol = drawPixel(x + cx - r, y + cy - r, color, alpha, bg_color);
+        drawPixel(x - cx + r, y + cy - r, pcol);
+        drawPixel(x - cx + r, y - cy + r, pcol);
+        drawPixel(x + cx - r, y - cy + r, pcol);
+      }
+    }
+    drawFastHLine(x + cx - r, y + cy - r, 2 * (r - cx) + 1, color);
+    drawFastHLine(x + cx - r, y - cy + r, 2 * (r - cx) + 1, color);
+  }
+  inTransaction = lockTransaction;
+  end_tft_write();
+}
+
+
+/***************************************************************************************
+** Function name:           fillSmoothRoundRect
+** Description:             Draw a filled anti-aliased rounded corner rectangle
+***************************************************************************************/
+void TFT_eSPI::fillSmoothRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint32_t color, uint32_t bg_color)
+{
+  inTransaction = true;
+  int32_t xs = 0;
+  int32_t cx = 0;
+
+  y += r;
+  h -= 2*r;
+  fillRect(x, y, w, h + 1, color);
+  x += r;
+  w -= 2*r+1;
+  int32_t r1 = r * r;
+  r++;
+  int32_t r2 = r * r;
+
+  for (int32_t cy = r - 1; cy > 0; cy--)
+  {
+    int32_t dy2 = (r - cy) * (r - cy);
+    for (cx = xs; cx < r; cx++)
+    {
+      int32_t hyp2 = (r - cx) * (r - cx) + dy2;
+      if (hyp2 <= r1) break;
+      if (hyp2 >= r2) continue;
+      float alphaf = (float)r - sqrtf(hyp2);
+      if (alphaf > HiAlphaTheshold) break;
+      xs = cx;
+      if (alphaf < LoAlphaTheshold) continue;
+      uint8_t alpha = alphaf * 255;
+
+      drawPixel(x + cx - r, y + cy - r, color, alpha, bg_color);
+      drawPixel(x - cx + r + w, y + cy - r, color, alpha, bg_color);
+      drawPixel(x - cx + r + w, y - cy + r + h, color, alpha, bg_color);
+      drawPixel(x + cx - r, y - cy + r + h, color, alpha, bg_color);
+    }
+    drawFastHLine(x + cx - r, y + cy - r, 2 * (r - cx) + 1 + w, color);
+    drawFastHLine(x + cx - r, y - cy + r + h, 2 * (r - cx) + 1 + w, color);
+  }
+  inTransaction = lockTransaction;
+  end_tft_write();
+}
+
+/***************************************************************************************
+** Function name:           drawSpot - maths intensive, so for small filled circles
+** Description:             Draw an anti-aliased filled circle at ax,ay with radius r
+***************************************************************************************/
+void TFT_eSPI::drawSpot(float ax, float ay, float r, uint32_t fg_color, uint32_t bg_color)
+{
+  // Filled circle can be created by the wide line function with zero line length
+  drawWedgeLine( ax, ay, ax, ay, r, r, fg_color, bg_color);
+}
+
+/***************************************************************************************
+** Function name:           drawWideLine - background colour specified or pixel read
+** Description:             draw an anti-aliased line with rounded ends, width wd
+***************************************************************************************/
+void TFT_eSPI::drawWideLine(float ax, float ay, float bx, float by, float wd, uint32_t fg_color, uint32_t bg_color)
+{
+  drawWedgeLine( ax, ay, bx, by, wd/2.0, wd/2.0, fg_color, bg_color);
+}
+
+/***************************************************************************************
+** Function name:           drawWedgeLine
+** Description:             draw an anti-aliased line with different width radiused ends
+***************************************************************************************/
+void TFT_eSPI::drawWedgeLine(float ax, float ay, float bx, float by, float ar, float br, uint32_t fg_color, uint32_t bg_color)
+{
+  if ( (abs(ax - bx) < 0.01f) && (abs(ay - by) < 0.01f) ) bx += 0.01f;  // Avoid divide by zero
+
+  // Find line bounding box
+  int32_t x0 = (int32_t)floorf(fminf(ax-ar, bx-br));
+  int32_t x1 = (int32_t) ceilf(fmaxf(ax+ar, bx+br));
+  int32_t y0 = (int32_t)floorf(fminf(ay-ar, by-br));
+  int32_t y1 = (int32_t) ceilf(fmaxf(ay+ar, by+br));
+
+  if (!clipWindow(&x0, &y0, &x1, &y1)) return;
+
+  // Establish x start and y start
+  int32_t ys = ay;
+  if ((ax-ar)>(bx-br)) ys = by;
+
+  float rdt = ar - br; // Radius delta
+  float alpha = 1.0f;
+  ar += 0.5;
+
+  uint16_t bg = bg_color;
+  float xpax, ypay, bax = bx - ax, bay = by - ay;
+
+  begin_nin_write();
+  inTransaction = true;
+
+  int32_t xs = x0;
+  // Scan bounding box from ys down, calculate pixel intensity from distance to line
+  for (int32_t yp = ys; yp <= y1; yp++) {
+    bool swin = true;  // Flag to start new window area
+    bool endX = false; // Flag to skip pixels
+    ypay = yp - ay;
+    for (int32_t xp = xs; xp <= x1; xp++) {
+      if (endX) if (alpha <= LoAlphaTheshold) break;  // Skip right side
+      xpax = xp - ax;
+      alpha = ar - wedgeLineDistance(xpax, ypay, bax, bay, rdt);
+      if (alpha <= LoAlphaTheshold ) continue;
+      // Track edge to minimise calculations
+      if (!endX) { endX = true; xs = xp; }
+      if (alpha > HiAlphaTheshold) {
+        if (swin) { setWindow(xp, yp, width()-1, yp); swin = false; }
+        pushColor(fg_color);
+        continue;
+      }
+      //Blend color with background and plot
+      if (bg_color == 0x00FFFFFF) {
+        bg = readPixel(xp, yp); swin = true;
+      }
+      if (swin) { setWindow(xp, yp, width()-1, yp); swin = false; }
+      pushColor(alphaBlend((uint8_t)(alpha * PixelAlphaGain), fg_color, bg));
+    }
+  }
+
+  // Reset x start to left side of box
+  xs = x0;
+  // Scan bounding box from ys-1 up, calculate pixel intensity from distance to line
+  for (int32_t yp = ys-1; yp >= y0; yp--) {
+    bool swin = true;  // Flag to start new window area
+    bool endX = false; // Flag to skip pixels
+    ypay = yp - ay;
+    for (int32_t xp = xs; xp <= x1; xp++) {
+      if (endX) if (alpha <= LoAlphaTheshold) break;  // Skip right side of drawn line
+      xpax = xp - ax;
+      alpha = ar - wedgeLineDistance(xpax, ypay, bax, bay, rdt);
+      if (alpha <= LoAlphaTheshold ) continue;
+      // Track line boundary
+      if (!endX) { endX = true; xs = xp; }
+      if (alpha > HiAlphaTheshold) {
+        if (swin) { setWindow(xp, yp, width()-1, yp); swin = false; }
+        pushColor(fg_color);
+        continue;
+      }
+      //Blend color with background and plot
+      if (bg_color == 0x00FFFFFF) {
+        bg = readPixel(xp, yp); swin = true;
+      }
+      if (swin) { setWindow(xp, yp, width()-1, yp); swin = false; }
+      pushColor(alphaBlend((uint8_t)(alpha * PixelAlphaGain), fg_color, bg));
+    }
+  }
+
+  inTransaction = lockTransaction;
+  end_nin_write();
+}
+
+// Calculate distance of px,py to closest part of line
+/***************************************************************************************
+** Function name:           lineDistance - private helper function for drawWedgeLine
+** Description:             returns distance of px,py to closest part of a to b wedge
+***************************************************************************************/
+inline float TFT_eSPI::wedgeLineDistance(float xpax, float ypay, float bax, float bay, float dr)
+{
+  float h = fmaxf(fminf((xpax * bax + ypay * bay) / (bax * bax + bay * bay), 1.0f), 0.0f);
+  float dx = xpax - bax * h, dy = ypay - bay * h;
+  return sqrtf(dx * dx + dy * dy) + h * dr;
 }
 
 
@@ -3742,7 +4102,7 @@ void TFT_eSPI::fillRectHGradient(int16_t x, int16_t y, int16_t w, int16_t h, uin
   if ((w < 1) || (h < 1)) return;
 
   begin_tft_write();
-  
+
   float delta = -255.0/w;
   float alpha = 255.0;
   uint32_t color = color1;
@@ -4000,7 +4360,7 @@ uint16_t TFT_eSPI::alphaBlend(uint8_t alpha, uint16_t fgc, uint16_t bgc, uint8_t
     if (alphaDither <  0) alpha = 0;
     if (alphaDither >255) alpha = 255;
   }
-  
+
   return alphaBlend(alpha, fgc, bgc);
 }
 
@@ -4036,6 +4396,25 @@ uint32_t TFT_eSPI::alphaBlend24(uint8_t alpha, uint32_t fgc, uint32_t bgc, uint8
   return (r << 16) | (g << 8) | (b << 0);
 }
 
+/***************************************************************************************
+** Function name:           write
+** Description:             draw characters piped through serial stream
+***************************************************************************************/
+/* // Not all processors support buffered write
+#ifndef ESP8266 // Avoid ESP8266 board package bug
+size_t TFT_eSPI::write(const uint8_t *buf, size_t len)
+{
+  inTransaction = true;
+
+  uint8_t *lbuf = (uint8_t *)buf;
+  while(*lbuf !=0 && len--) write(*lbuf++);
+
+  inTransaction = lockTransaction;
+  end_tft_write();
+  return 1;
+}
+#endif
+*/
 /***************************************************************************************
 ** Function name:           write
 ** Description:             draw characters piped through serial stream
@@ -4336,7 +4715,7 @@ int16_t TFT_eSPI::drawChar(uint16_t uniCode, int32_t x, int32_t y, uint8_t font)
 
     w *= height; // Now w is total number of pixels in the character
     if (textcolor == textbgcolor && !clip) {
-      
+
       int32_t px = 0, py = pY; // To hold character block start and end column and row values
       int32_t pc = 0; // Pixel count
       uint8_t np = textsize * textsize; // Number of pixels in a drawn pixel
@@ -4787,6 +5166,7 @@ int16_t TFT_eSPI::drawFloat(float floatNumber, uint8_t dp, int32_t poX, int32_t 
   uint8_t ptr = 0;            // Initialise pointer for array
   int8_t  digits = 1;         // Count the digits to avoid array overflow
   float rounding = 0.5;       // Round up down delta
+  bool negative = false;
 
   if (dp > 7) dp = 7; // Limit the size of decimal portion
 
@@ -4798,9 +5178,15 @@ int16_t TFT_eSPI::drawFloat(float floatNumber, uint8_t dp, int32_t poX, int32_t 
     str[ptr] = 0; // Put a null in the array as a precaution
     digits = 0;   // Set digits to 0 to compensate so pointer value can be used later
     floatNumber = -floatNumber; // Make positive
+    negative = true;
   }
 
   floatNumber += rounding; // Round up or down
+
+  if (dp == 0) {
+    if (negative) floatNumber = -floatNumber;
+    return drawNumber((long)floatNumber, poX, poY, font);
+  }
 
   // For error put ... in string and return (all TFT_eSPI library fonts contain . character)
   if (floatNumber >= 2147483647) {
@@ -4865,7 +5251,7 @@ void TFT_eSPI::setFreeFont(const GFXfont *f)
   uint16_t numChars = pgm_read_word(&gfxFont->last) - pgm_read_word(&gfxFont->first);
 
   // Find the biggest above and below baseline offsets
-  for (uint8_t c = 0; c < numChars; c++) {
+  for (uint16_t c = 0; c < numChars; c++) {
     GFXglyph *glyph1  = &(((GFXglyph *)pgm_read_dword(&gfxFont->glyph))[c]);
     int8_t ab = -pgm_read_byte(&glyph1->yOffset);
     if (ab > glyph_ab) glyph_ab = ab;
@@ -5072,8 +5458,9 @@ void TFT_eSPI::getSetup(setup_t &tft_settings)
 ////////////////////////////////////////////////////////////////////////////////////////
 #ifdef TOUCH_CS
   #include "Extensions/Touch.cpp"
-  #include "Extensions/Button.cpp"
 #endif
+
+#include "Extensions/Button.cpp"
 
 #include "Extensions/Sprite.cpp"
 

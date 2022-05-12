@@ -9,14 +9,14 @@
   The built-in fonts 4, 6, 7 and 8 are Run Length
   Encoded (RLE) to reduce the FLASH footprint.
 
-  Last review/edit by Bodmer: 05/01/22
+  Last review/edit by Bodmer: 04/02/22
  ****************************************************/
 
 // Stop fonts etc being loaded multiple times
 #ifndef _TFT_eSPIH_
 #define _TFT_eSPIH_
 
-#define TFT_ESPI_VERSION "2.4.25"
+#define TFT_ESPI_VERSION "2.4.43"
 
 // Bit level feature flags
 // Bit 0 set: viewport capability
@@ -407,6 +407,18 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
                    height(void),
                    width(void);
 
+                   // Read the colour of a pixel at x,y and return value in 565 format 
+  virtual uint16_t readPixel(int32_t x, int32_t y);
+
+  virtual void     setWindow(int32_t xs, int32_t ys, int32_t xe, int32_t ye);   // Note: start + end coordinates
+
+                   // Push (aka write pixel) colours to the set window
+  virtual void     pushColor(uint16_t color);
+
+                   // These are non-inlined to enable override
+  virtual void     begin_nin_write();
+  virtual void     end_nin_write();
+
   void     setRotation(uint8_t r); // Set the display image orientation to 0, 1, 2 or 3
   uint8_t  getRotation(void);      // Read the current rotation
 
@@ -414,8 +426,7 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
 
   // The TFT_eSprite class inherits the following functions (not all are useful to Sprite class
-  void     setAddrWindow(int32_t xs, int32_t ys, int32_t w, int32_t h), // Note: start coordinates + width and height
-           setWindow(int32_t xs, int32_t ys, int32_t xe, int32_t ye);   // Note: start + end coordinates
+  void     setAddrWindow(int32_t xs, int32_t ys, int32_t w, int32_t h); // Note: start coordinates + width and height
 
   // Viewport commands, see "Viewport_Demo" sketch
   void     setViewport(int32_t x, int32_t y, int32_t w, int32_t h, bool vpDatum = true);
@@ -428,9 +439,13 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
   void     frameViewport(uint16_t color, int32_t w);
   void     resetViewport(void);
 
-  // Push (aka write pixel) colours to the TFT (use setAddrWindow() first)
-  void     pushColor(uint16_t color),
-           pushColor(uint16_t color, uint32_t len),  // Deprecated, use pushBlock()
+           // Clip input window to viewport bounds, return false if whole area is out of bounds
+  bool     clipAddrWindow(int32_t* x, int32_t* y, int32_t* w, int32_t* h);
+           // Clip input window area to viewport bounds, return false if whole area is out of bounds
+  bool     clipWindow(int32_t* xs, int32_t* ys, int32_t* xe, int32_t* ye);
+
+           // Push (aka write pixel) colours to the TFT (use setAddrWindow() first)
+  void     pushColor(uint16_t color, uint32_t len),  // Deprecated, use pushBlock()
            pushColors(uint16_t  *data, uint32_t len, bool swap = true), // With byte swap option
            pushColors(uint8_t  *data, uint32_t len); // Deprecated, use pushPixels()
 
@@ -439,9 +454,6 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
            // Write a set of pixels stored in memory, use setSwapBytes(true/false) function to correct endianess
   void     pushPixels(const void * data_in, uint32_t len);
-
-           // Read the colour of a pixel at x,y and return value in 565 format 
-  uint16_t readPixel(int32_t x, int32_t y);
 
            // Support for half duplex (bi-directional SDA) SPI bus where MOSI must be switched to input
            #ifdef TFT_SDA_READ
@@ -460,6 +472,28 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
   void     fillRectVGradient(int16_t x, int16_t y, int16_t w, int16_t h, uint32_t color1, uint32_t color2);
   void     fillRectHGradient(int16_t x, int16_t y, int16_t w, int16_t h, uint32_t color1, uint32_t color2);
+
+           // Draw a pixel blended with the pixel colour on the TFT or sprite, return blended colour
+           // If bg_color is not included the background pixel colour will be read from TFT or sprite
+  uint16_t drawPixel(int32_t x, int32_t y, uint32_t color, uint8_t alpha, uint32_t bg_color = 0x00FFFFFF);
+
+           // Draw a small anti-aliased filled circle at ax,ay with radius r (uses drawWideLine)
+           // If bg_color is not included the background pixel colour will be read from TFT or sprite
+  void     drawSpot(float ax, float ay, float r, uint32_t fg_color, uint32_t bg_color = 0x00FFFFFF);
+
+           // Draw an anti-aliased filled circle at x, y with radius r
+           // If bg_color is not included the background pixel colour will be read from TFT or sprite
+  void     fillSmoothCircle(int32_t x, int32_t y, int32_t r, uint32_t color, uint32_t bg_color = 0x00FFFFFF);
+
+  void     fillSmoothRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius, uint32_t color, uint32_t bg_color = 0x00FFFFFF);
+
+           // Draw an anti-aliased wide line from ax,ay to bx,by width wd with radiused ends (radius is wd/2)
+           // If bg_color is not included the background pixel colour will be read from TFT or sprite
+  void     drawWideLine(float ax, float ay, float bx, float by, float wd, uint32_t fg_color, uint32_t bg_color = 0x00FFFFFF);
+
+           // Draw an anti-aliased wide line from ax,ay to bx,by with different width at each end aw, bw and with radiused ends
+           // If bg_color is not included the background pixel colour will be read from TFT or sprite
+  void     drawWedgeLine(float ax, float ay, float bx, float by, float aw, float bw, uint32_t fg_color, uint32_t bg_color = 0x00FFFFFF);
 
   void     drawCircle(int32_t x, int32_t y, int32_t r, uint32_t color),
            drawCircleHelper(int32_t x, int32_t y, int32_t r, uint8_t cornername, uint32_t color),
@@ -577,7 +611,8 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
            // Support function to UTF8 decode and draw characters piped through print stream
   size_t   write(uint8_t);
-  
+  // size_t   write(const uint8_t *buf, size_t len);
+
            // Used by Smooth font class to fetch a pixel colour for the anti-aliasing
   void     setCallback(getColorCallback getCol);
 
@@ -585,9 +620,13 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
   // Low level read/write
   void     spiwrite(uint8_t);        // legacy support only
-
-  void     writecommand(uint8_t c),  // Send a command, function resets DC/RS high ready for data
-           writedata(uint8_t d);     // Send data with DC/RS set high
+#ifndef RM68120_DRIVER
+  void     writecommand(uint8_t c);  // Send a command, function resets DC/RS high ready for data
+#else
+  void     writecommand(uint16_t c); // Send a command, function resets DC/RS high ready for data
+  void     writeRegister(uint16_t c, uint8_t d); // Write data to 16 bit command register
+#endif
+  void     writedata(uint8_t d);     // Send data with DC/RS set high
 
   void     commandList(const uint8_t *addr); // Send a initialisation sequence to TFT stored in FLASH
 
@@ -744,6 +783,9 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
            // Single GPIO input/output direction control
   void     gpioMode(uint8_t gpio, uint8_t mode);
 
+           // Helper function: calculate distance of a point from a finite length line between two points
+  float    wedgeLineDistance(float pax, float pay, float bax, float bay, float dr);
+
            // Display variant settings
   uint8_t  tabcolor,                   // ST7735 screen protector "tab" colour (now invalid)
            colstart = 0, rowstart = 0; // Screen display area to CGRAM area coordinate offsets
@@ -807,6 +849,11 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
   bool     _psram_enable; // Enable PSRAM use for library functions (TBD) and Sprites
 
   uint32_t _lastColor; // Buffered value of last colour used
+
+#if defined (SSD1963_DRIVER) 
+  uint16_t Cswap;      // Swap buffer for SSD1963
+  uint8_t r6, g6, b6;  // RGB buffer for SSD1963
+#endif
 
 #ifdef LOAD_GFXFF
   GFXfont  *gfxFont;
