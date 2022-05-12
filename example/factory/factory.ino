@@ -6,11 +6,9 @@
 #include "SD.h"
 #include <Wire.h>
 #include "WiFi.h"
-// #include <U8g2lib.h>
 
 TFT_eSPI tft = TFT_eSPI(); // Invoke library, pins defined in User_Setup.h
 SPIClass hspi(HSPI);
-// U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, IIC_SCL, IIC_SDA, U8X8_PIN_NONE);
 int x, y = 0;
 
 const char *ssid = "Your-ssid";
@@ -144,10 +142,17 @@ void wifi_test()
     {
       tft.print(i + 1);
       tft.print(": ");
-            char ssid[35];
+      char ssid[35];
       WiFi.SSID(i).toCharArray(ssid, 33);
-      tft.print(ssid);
-//      tft.print(WiFi.SSID(i).c_str());
+      uint8_t len = WiFi.SSID(i).length();
+      uint8_t c = 0;
+      while (len--)
+      {
+        if ((*ssid > 0x19) && (*ssid < 0x7e))
+          tft.write(*(ssid + c));
+        c++;
+      }
+      //      tft.print(WiFi.SSID(i).c_str());
       tft.print(" (");
       tft.print(WiFi.RSSI(i));
       tft.print(")");
@@ -192,18 +197,13 @@ void setup(void)
 {
   Serial.begin(115200);
 
-  u8g2.begin();
-  u8g2.clearBuffer();
-  u8g2.drawXBM(0, 11, 128, 41, oled_Image);
-  u8g2.sendBuffer();
-
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
   tft.init();
   tft.setRotation(1);
   tft.setSwapBytes(true);
-  //tft.loadFont(FreeMono9pt7bBitmaps);
+  // tft.loadFont(FreeMono9pt7bBitmaps);
   tft.setTextFont(2);
   // tft.invertDisplay(false);
   tft.fillScreen(TFT_BLACK);
