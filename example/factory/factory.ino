@@ -6,12 +6,11 @@
 #include "SD.h"
 #include <Wire.h>
 #include "WiFi.h"
-#include <U8g2lib.h>
+// #include <U8g2lib.h>
 
 TFT_eSPI tft = TFT_eSPI(); // Invoke library, pins defined in User_Setup.h
 SPIClass hspi(HSPI);
-// U8G2_SSD1306_128X64_NONAME_F_SW_I2C *u8g2 = nullptr;
-U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, IIC_SCL, IIC_SDA, U8X8_PIN_NONE);
+// U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, IIC_SCL, IIC_SDA, U8X8_PIN_NONE);
 int x, y = 0;
 
 const char *ssid = "Your-ssid";

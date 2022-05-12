@@ -18,7 +18,7 @@
 // #define SPI_READ_FREQUENCY  20000000
 // #define SPI_TOUCH_FREQUENCY  2500000
 
-// #define TFT_MISO 4
+// #define TFT_MISO -1
 // #define TFT_MOSI 35
 // #define TFT_SCLK 36
 // #define TFT_CS 34  // Chip select control pin
