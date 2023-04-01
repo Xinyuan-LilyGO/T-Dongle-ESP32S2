@@ -18,3 +18,4 @@
 ![](image/setting1.png)
 ![](image/example1.png)
 
+4. [Please refer to this guide for drivers](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/api-guides/dfu.html)
